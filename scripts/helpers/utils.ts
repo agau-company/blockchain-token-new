@@ -59,7 +59,6 @@ export async function trackDeployment<T extends BaseContract>(
             const contract = await fn();
 
             const net = await ethers.provider.getNetwork();
-            console.log(`network`, net)
 
             const deploymentTransaction = contract.deploymentTransaction();
 
@@ -100,6 +99,30 @@ export async function trackDeployment<T extends BaseContract>(
     }
 }
 
+export async function trackDeploymentNoLogs<T extends BaseContract>(
+    fn: () => Promise<T>,
+    name: string = `Contract`,
+): Promise<T> {
+    for (; ;) {
+        try {
+            const contract = await fn();
+
+            const net = await ethers.provider.getNetwork();
+
+            const deploymentTransaction = contract.deploymentTransaction();
+
+            updateDeploymentsJson(name, contract.target, net.chainId);
+
+            return contract;
+        } catch (e) {
+            console.log(`Failed to deploy ${name} contract, error: ${e}`, e);
+            if (askYesNo(`Retry?`) == false) {
+                throw `Deployment failed`;
+            }
+        }
+    }
+}
+
 export function updateDeploymentsJson(
     contractName: string,
     contractAddr: AddressLike,
@@ -111,6 +134,7 @@ export function updateDeploymentsJson(
         JSON.stringify(deployments, null, 4),
     );
 }
+
 
 function rewriteDeploymentJson(
     contractName: string,
