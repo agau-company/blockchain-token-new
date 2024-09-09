@@ -11,7 +11,22 @@ import {WhitelistTypes} from "lib/agau-common/admin-ops/WhitelistTypes.sol";
 library TokenOpTypes {
     enum OpType {
         MINT_OP,
-        RELEASE_OP
+        RELEASE_OP,
+        ADMIN_OP
+    }
+
+    struct CommonAdminOpManageSignerData {
+        address signerAddress;
+        string roleName;
+        OpType operationType;
+    }
+
+    struct CommonAdminOpManageSigner {
+        CommonAdminOpManageSignerData signData;
+        // Message Hash
+        bytes32 signatureHash;
+        // Submitted signatures
+        bytes[] signatures;
     }
 
     /// @dev Structure containing common token management instruction
