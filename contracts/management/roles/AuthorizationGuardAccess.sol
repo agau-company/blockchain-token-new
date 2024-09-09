@@ -13,7 +13,15 @@ abstract contract AuthorizationGuardAccess is Initializable {
     modifier onlyAdminAccess() {
         require(
             _authorizationGuard.hasRole(_authorizationGuard.DEFAULT_ADMIN_ROLE(), msg.sender),
-            "Caller is not an admin"
+            "Missing `DEFAULT_ADMIN_ROLE`"
+        );
+        _;
+    }
+
+    modifier onlyFeesManager() {
+        require(
+            _authorizationGuard.hasRole(_authorizationGuard.FEES_MANAGER_ROLE(), msg.sender),
+            "Missing `FEES_MANAGER_ROLE`"
         );
         _;
     }
@@ -21,13 +29,16 @@ abstract contract AuthorizationGuardAccess is Initializable {
     modifier onlyAuthorizedAccess() {
         require(
             _authorizationGuard.hasRole(_authorizationGuard.AUTHORIZED_ROLE(), msg.sender),
-            "Caller is not authorized"
+            "Missing `AUTHORIZED_ROLE`"
         );
         _;
     }
 
-    modifier onlyTrustedContracts() {
-        require(_authorizationGuard.isTrustedContract(msg.sender), "Caller is not trusted");
+    modifier onlyTokenManager() {
+        require(
+            _authorizationGuard.hasRole(_authorizationGuard.TOKEN_MANAGER_ROLE(), msg.sender),
+            "Missing `TOKEN_MANAGER_ROLE`"
+        );
         _;
     }
 
