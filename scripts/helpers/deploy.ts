@@ -235,8 +235,8 @@ export async function deployAuthorizationGuard(
 }
 
 export interface MultiSigValidationConstructorArgs {
-    // requiredSignatures: BigInt;
     authorizationGuard: AddressLike;
+    multiSigSigners: SignerEntityStruct[];
     mintSigners: SignerEntityStruct[];
     releaseSigners: SignerEntityStruct[];
     [key: string]: SignerEntityStruct[] | AddressLike;
@@ -253,6 +253,7 @@ export async function deployMultiSigValidation(
     const multiSigValidationContract = await deployWait(
         multiSigValidation.deploy(
             constructorArgs.authorizationGuard,
+            constructorArgs.multiSigSigners,
             constructorArgs.mintSigners,
             constructorArgs.releaseSigners
         ),
