@@ -11,7 +11,7 @@ export interface CommonOpMessage {
     // Submitted signatures
     signatures: string[];
     // Signer index in roles array
-    roleIndices: number[];
+    // roleIndices: number[];
 }
 
 export interface SignerEntityStruct {

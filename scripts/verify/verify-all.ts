@@ -9,6 +9,7 @@ import * as verifyMetalToken from "./verify-metalTok";
 import * as verifyFeesManager from "../../scripts/verify/verify-feesmanager";
 import * as verifyTokenFactory from "../../scripts/verify/verify-tokenfactory";
 import * as verifyTokenManager from "../../scripts/verify/verify-tokenmanager";
+import { getContractFromDeployment } from "../helpers/deployed-contracts";
 
 type NetworkNames = 'bsc' | 'sepolia' | 'hardhat' | 'ethereum';
 
@@ -25,7 +26,7 @@ const verificationParams: { [key: string]: any } = {
 const networks: { [chainId: string]: NetworkNames } = {
     '11155111': 'sepolia',
     '1': 'ethereum',
-    '97': 'bsc'
+    '97': 'bsc',
 }
 
 export const verifyAllContracts = async () => {
@@ -53,14 +54,13 @@ export const verifyAllContracts = async () => {
             // Verification functions defined above for each contract
             let verify = verificationParams[contract.name].func;
 
-            // Extract contract addresses from deployment json
-            const authorizationGuardContr = contractDeployment.contracts.find((contractObj) => contractObj.name === 'AuthorizationGuard');
-            const feesManagerContr = contractDeployment.contracts.find((contractObj) => contractObj.name === 'FeesManager');
-            const tokenManager = contractDeployment.contracts.find((contractObj) => contractObj.name === 'TokenManager');
-            const multisigValidationContr = contractDeployment.contracts.find((contractObj) => contractObj.name === 'MultiSigValidation');
-            const metalToken = contractDeployment.contracts.find((contractObj) => contractObj.name === 'MetalToken');
-            const tokenFactory = contractDeployment.contracts.find((contractObj) => contractObj.name === 'TokenFactory');
-            const metalBeaconToken = contractDeployment.contracts.find((contractObj) => contractObj.name === 'MetalToken');
+            const authorizationGuardContr = await getContractFromDeployment('AuthorizationGuard');
+            const feesManagerContr = await getContractFromDeployment('FeesManager');
+            const tokenManager = await getContractFromDeployment('TokenManager');
+            const multisigValidationContr = await getContractFromDeployment('MultiSigValidation');
+            const metalToken = await getContractFromDeployment('MetalToken');
+            const tokenFactory = await getContractFromDeployment('TokenFactory');
+            const metalBeaconToken = await getContractFromDeployment('MetalToken');
 
             console.log(`************** Starting verification for ${contract.name}**************`)
 

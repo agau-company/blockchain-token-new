@@ -1,7 +1,9 @@
 import { ethers } from "hardhat";
 import signatureValidationArtifcat from "../../artifacts/contracts/signature/SignatureValidation.sol/MultiSigValidation.json";
 import { CommonOpMessage } from "./signature_interfaces";
-import { Wallet } from "ethers";
+import { Wallet, Contract } from "ethers";
+import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
+
 
 // Connect to the Ethereum provider
 // const provider = ethers.getDefaultProvider('sepolia'); // or your preferred network
@@ -61,17 +63,56 @@ async function signPrefixedMessage(hash: string, wallet: any) {
 
 
 // Start signing procedure
-export async function signMessages(functionName: string, message: CommonOpMessage, signatureContract: string) {
-    const messageHash = await retrieveMessageHash(functionName, message, signatureContract);
+export async function signMessages(functionName: string, message: CommonOpMessage, signatureContractAddress: string) {
+    const messageHash = await retrieveMessageHash(functionName, message, signatureContractAddress);
 
+    const signatureContract = new ethers.Contract(signatureContractAddress, signatureValidationArtifcat.abi, provider);
+
+    const op0Signers = await signatureContract.getSignerRegistry(0);
+    const op1Signers = await signatureContract.getSignerRegistry(1);
+
+    console.log(`op0Signers:`, op0Signers);
+    console.log(`op1Signers:`, op1Signers);
+
+    const [deployer, be, signer1, signer2, signer3, signer4, signer5, signer6, signer7] = await ethers.getSigners();
+
+    const allConnectedWallets = [signer1, signer2, signer3, signer4, signer5, signer6, signer7];
+
+    let signers: HardhatEthersSigner[] = [];
+    if (functionName.includes('release')) {
+
+        for (let signerAddress of op1Signers) {
+            const wallet = allConnectedWallets.find((w) => w.address == signerAddress);
+            if (!wallet) {
+                console.log(`Could not set up signer wallets for signing message...`);
+                return;
+            }
+            signers.push(wallet);
+        }
+
+    }
+    else {
+        for (let signerAddress of op0Signers) {
+            const wallet = allConnectedWallets.find((w) => w.address == signerAddress);
+            if (!wallet) {
+                console.log(`Could not set up signer wallets for signing message...`);
+                continue
+            }
+            signers.push(wallet);
+        }
+
+    }
+
+    console.log(`Using signers:`, signers);
     const signatures = [];
     let _prefixedMessage;
-    for (let i = 2; i < 6; i++) {
-        const { signature, prefixedMessage } = await signPrefixedMessage(messageHash, signers[i])
+    // for (let i = 2; i < 7; i++) {
+    for (let signer of signers) {
+        console.log(`[${functionName}]: Signing message by wallet ${signer.address}`)
+        const { signature, prefixedMessage } = await signPrefixedMessage(messageHash, signer)
 
         _prefixedMessage = prefixedMessage;
-        const addr = await signers[i].getAddress();
-        console.log(`User: ${addr}; signature: ${signature}`);
+        console.log(`User: ${signer.address}; signature: ${signature}`);
         signatures.push(signature);
     }
 

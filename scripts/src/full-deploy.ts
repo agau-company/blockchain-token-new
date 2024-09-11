@@ -4,10 +4,30 @@ import { chainIds } from "../../hardhat.config";
 import { trackDeployment, trackTransaction, updateDeploymentsJson } from "../helpers/utils";
 import { getImplementationAddress } from "@openzeppelin/upgrades-core";
 import { TokenIdentifier, getTokensMetadata } from "../config/token/config";
-import { getAMBContract, getForeignMediator, getFeeRate, getFeeWallet } from "../helpers/env";
+import { getFeeRate, getFeeWallet } from "../helpers/env";
 
 import * as deployment from "../helpers/deploy";
-import { generateIncomingRoutingConfig } from "../config/bridge/config";
+import { SignerEntityStruct } from "../signature/signature_interfaces";
+
+export enum OpType {
+    MINT_OP,
+    RELEASE_OP,
+    ADMIN_OP
+}
+
+const feesWallet = getFeeWallet();
+
+
+const roles = [
+    "Warehouse admin",
+    "Director",
+    "Token manager",
+    "Auditor",
+];
+
+
+const tokenFactoryOwner = feesWallet;
+
 
 const isTestnetDeployment = async (): Promise<boolean> => {
     return (await ethers.provider.getNetwork()).chainId === chainIds.tenderly;
@@ -16,7 +36,36 @@ const isTestnetDeployment = async (): Promise<boolean> => {
 export let deployerAddr: string;
 
 export const fullDeploy = async (): Promise<void> => {
-    const [deployer] = await ethers.getSigners();
+    const [deployer, backendWallet, signer1, signer2, signer3, signer4] = await ethers.getSigners();
+
+
+    const adminAddresses = [
+        deployer.address,
+    ];
+
+    // Wallets who must sign the message to authorize a transaction such as `mintAndLockTokens`, `releaseTokens`, `burnTokens`
+    const signers = [signer1.address, signer2.address, signer3.address, signer4.address];
+
+    const mintSigners: SignerEntityStruct[] = [
+        { signerAddress: signer1.address, roleName: "Warehouse admin", operationType: OpType.MINT_OP },
+        { signerAddress: signer2.address, roleName: "Director", operationType: OpType.MINT_OP },
+        { signerAddress: signer3.address, roleName: "Token manager", operationType: OpType.MINT_OP },
+        { signerAddress: signer4.address, roleName: "Auditor", operationType: OpType.MINT_OP },
+    ];
+
+    const releaseSigners: SignerEntityStruct[] = [
+        { signerAddress: signer4.address, roleName: "Auditor", operationType: OpType.RELEASE_OP },
+    ];
+
+    const multiSigSigners: SignerEntityStruct[] = [
+        { signerAddress: signer1.address, roleName: "Signature Manager", operationType: OpType.ADMIN_OP },
+    ];
+
+    // Wallets who can call the TokenManager and other contract functions such as `mintAndLockTokens`, `releaseTokens`, should be the backend wallet.
+    const authorizedAdmins = [deployer.address, backendWallet.address];
+
+    // console.log(`Signers:`, { signer1: signer1.address, signer2: signer2.address, signer3: signer3.address, signer4: signer4.address });
+
     deployerAddr = deployer.address;
     const testnetDeployment = await isTestnetDeployment();
 
@@ -31,16 +80,40 @@ export const fullDeploy = async (): Promise<void> => {
     const balance = (await ethers.provider.getBalance(deployerAddr)).toString();
     // console.log(`Deploying contracts with the account ${deployerAddr} and balance: ${balance}`);
 
-    // Deploy `BridgeMediator` contract
-    const bridgeMediator = await trackDeployment(
-        () =>
-            deployment.deployBridgeMediator(deployer, {
-                AMBContract: getAMBContract(),
-                foreignMediator: getForeignMediator(),
-                owner: deployerAddr,
-            }),
-        `BridgeMediator`,
+
+    const expectedTokenManagerContractAddress = ethers.getCreateAddress({
+        from: deployerAddr,
+        // +3 as current nonce +2 (sum +3) is for `FeesManager` deployment and +1 is for `TokenFactory` deployment
+        nonce: (await deployer.getNonce()) + 5,
+    });
+
+
+    // console.log(`Expected token Manager:1`, expectedTokenManagerContractAddress);
+    // Deploy `authorizationGuard`
+    const authorizationGuard = await trackDeployment(
+        () => deployment.deployAuthorizationGuard(deployer, {
+            adminAddresses,
+            authorizedAccounts: authorizedAdmins,
+            trustedContracts: [expectedTokenManagerContractAddress]
+        }),
+        `AuthorizationGuard`,
     );
+
+    // console.log(`AuthorizationGuard deployed at ${authorizationGuard.target}`);
+
+    // Deploy Multi Signature Validation contract
+    const multiSigValidation = await trackDeployment(
+        () => deployment.deployMultiSigValidation(deployer, {
+            authorizationGuard: authorizationGuard.target,
+            multiSigSigners: multiSigSigners,
+            mintSigners: mintSigners,
+            releaseSigners: releaseSigners
+        }),
+        `MultiSigValidation`
+    )
+
+    // console.log(`MultiSigValidation deployed at ${multiSigValidation.target}`);
+
 
     // Deploy `MetalToken` beacon
     const metalTokenBeacon = await trackDeployment(
@@ -48,27 +121,39 @@ export const fullDeploy = async (): Promise<void> => {
         `MetalToken`,
     );
 
+    // console.log(`MetalToken Beacon proxy deployed at ${metalTokenBeacon.target}`);
+
+
     // Deploy `FeesManager` proxy
     const expectedTokenManagerAddress = ethers.getCreateAddress({
         from: deployerAddr,
-        // +4 as current nonce +2 (sum +3) is for `FeesManager` deployment and +1 is for `TokenFactory` deployment
-        nonce: (await deployer.getNonce()) + 4,
+        // +3 as current nonce +2 (sum +3) is for `FeesManager` deployment and +1 is for `TokenFactory` deployment
+        nonce: (await deployer.getNonce()) + 2,
     });
+
+
+
+    // console.log(`Actual TokenManager address:`, expectedTokenManagerAddress)
+    const feeRate = getFeeRate();
     const feeWallet = getFeeWallet();
     const feesManagerProxy = await trackDeployment(
         () =>
             deployment.deployFeesManager(deployer, {
                 feeWallet: feeWallet,
-                txFeeRate: getFeeRate(),
+                txFeeRate: feeRate,
                 minTxFee: 0n,
                 maxTxFee: ethers.MaxUint256,
                 zeroFeeAccounts: [feeWallet, expectedTokenManagerAddress],
+                authorizationGuard: authorizationGuard.target
             }),
         `FeesManager`,
     );
 
+    // console.log(`FeesManager deployed at ${feesManagerProxy.target}`);
+
+
     // Deploy `TokenFactory` contract
-    const tokensMetadata = getTokensMetadata(deployerAddr, feesManagerProxy.target);
+    const tokensMetadata = getTokensMetadata(deployerAddr, feesManagerProxy.target, authorizationGuard.target);
     const tokenFactory = await trackDeployment(
         () =>
             deployment.deployTokenFactory(deployer, {
@@ -79,16 +164,28 @@ export const fullDeploy = async (): Promise<void> => {
         `TokenFactory`,
     );
 
+    // console.log(`TokenFactory deployed at ${tokenFactory.target}`);
+
     // Deploy `TokenManager` contract
     const tokenManager = await trackDeployment(
         () =>
             deployment.deployTokenManager(deployer, {
-                mediator: bridgeMediator.target,
                 tokenFactory: tokenFactory.target,
                 feesManager: feesManagerProxy.target,
+                adminAddresses: adminAddresses,
+                authorizedAddresses: authorizedAdmins,
+                multiSigValidationAddress: multiSigValidation.target,
+                authorizedGuardAddress: authorizationGuard.target
             }),
         `TokenManager`,
     );
+
+    // console.log(`TokenManager deployed at ${tokenManager.target}`);
+
+    const isTrusted = await authorizationGuard.isTrustedContract(tokenManager.target);
+    if (isTrusted) {
+        // console.log(`Token manager is trusted?.`, isTrusted)
+    }
 
     // In case of testnet deployment, verify the proxy and beacon contracts on Tenderly
     if (testnetDeployment) {
@@ -106,6 +203,7 @@ export const fullDeploy = async (): Promise<void> => {
                 metalTokenBeacon.target.toString(),
             ),
         });
+
     }
 
     // Must be retrieved like this as these are beacon proxies created during the deployment of `TokenFactory`
@@ -113,42 +211,18 @@ export const fullDeploy = async (): Promise<void> => {
         `MetalToken`,
         await tokenFactory.tokenForId(TokenIdentifier.Gold),
     );
+    console.log(`Gold MetalToken deployed at ${goldToken.target}`);
+
+
     const silverToken = await ethers.getContractAt(
         `MetalToken`,
         await tokenFactory.tokenForId(TokenIdentifier.Silver),
     );
 
-    const routingConfig = await generateIncomingRoutingConfig({
-        tokenManager: tokenManager.target,
-    });
 
     const chainId = (await ethers.provider.getNetwork()).chainId;
     // Write the deployment results for metal token beacon proxies as they are already deployed via `TokenFactory`
     updateDeploymentsJson(`GoldToken`, goldToken.target, chainId);
     updateDeploymentsJson(`SilverToken`, silverToken.target, chainId);
 
-    await trackTransaction(
-        bridgeMediator.setIncomingMessagesConfigs(routingConfig),
-        `Set the incoming messages routing configuration on BridgeMediator`,
-    );
-
-    await trackTransaction(
-        bridgeMediator.setAuthorized(tokenManager.target, true),
-        `Set the TokenManager as authorized on BridgeMediator`,
-    );
-
-    await trackTransaction(
-        goldToken.setAuthorized(tokenManager.target, true),
-        `Set the TokenManager as authorized on Gold Token`,
-    );
-
-    await trackTransaction(
-        silverToken.setAuthorized(tokenManager.target, true),
-        `Set the TokenManager as authorized on Silver Token`,
-    );
-
-    await trackTransaction(
-        feesManagerProxy.setAuthorized(tokenManager.target, true),
-        `Set the TokenManager as authorized on FeesManager`,
-    );
 };

@@ -2,7 +2,7 @@
 pragma solidity 0.8.22;
 
 import {WhitelistTypes} from "lib/agau-common/admin-ops/WhitelistTypes.sol";
-import {AuthorizationGuard} from "../roles/AuthorizationGuard.sol";
+import {AuthorizationGuardAccess} from "../roles/AuthorizationGuardAccess.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 /**
@@ -10,11 +10,9 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
  * @author
  * @dev Contract for managing fee discounts and their assignment to users
  */
-abstract contract FeesWhitelist is Initializable {
+abstract contract FeesWhitelist is Initializable, AuthorizationGuardAccess {
     /// @dev Identifier of the special AgAu group created during intialization. Has 100% discount
     uint256 public constant SPECIAL_AGAU_GROUP_ID = 1;
-
-    AuthorizationGuard private _authorizationGuard;
 
     /// @dev Mapping from group type to group count
     mapping(WhitelistTypes.GroupType groupType => uint256 count) private _groupCount;
@@ -66,14 +64,6 @@ abstract contract FeesWhitelist is Initializable {
     /// @dev Discount value is invalid
     error InvalidDiscountValue();
 
-    modifier onlyAuthorized() {
-        require(
-            _authorizationGuard.hasRole(_authorizationGuard.AUTHORIZED_ROLE(), msg.sender),
-            "Caller not authorized"
-        );
-        _;
-    }
-
     function __FeesWhitelist_init(
         address[] memory zeroFeesAccounts,
         address authorizationGuardAddress
@@ -87,7 +77,7 @@ abstract contract FeesWhitelist is Initializable {
             })
         );
 
-        _authorizationGuard = AuthorizationGuard(authorizationGuardAddress);
+        __AuthorizationGuardAccess_init(authorizationGuardAddress);
 
         // Set zero fees accounts
         for (uint256 i; i < zeroFeesAccounts.length; ++i) {
@@ -106,7 +96,7 @@ abstract contract FeesWhitelist is Initializable {
     function createDiscountGroup(
         WhitelistTypes.GroupType groupType,
         WhitelistTypes.Discount calldata discount_
-    ) external onlyAuthorized {
+    ) external onlyFeesManager {
         _revertIfInvalidDiscount(discount_);
         _createDiscountGroup(groupType, discount_);
     }
@@ -121,7 +111,7 @@ abstract contract FeesWhitelist is Initializable {
         WhitelistTypes.GroupType groupType,
         uint256 groupId,
         WhitelistTypes.Discount calldata discount_
-    ) external onlyAuthorized {
+    ) external onlyFeesManager {
         _revertIfGroupNotExist(groupType, groupId);
         _revertIfDefaultGroup(groupId);
         _revertIfInvalidDiscount(discount_);
@@ -141,7 +131,7 @@ abstract contract FeesWhitelist is Initializable {
         WhitelistTypes.GroupType groupType,
         uint256 groupId,
         address user
-    ) external onlyAuthorized {
+    ) external onlyFeesManager {
         _revertIfGroupNotExist(groupType, groupId);
         _setGroupForUser(groupType, groupId, user);
     }

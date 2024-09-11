@@ -49,7 +49,7 @@ contract FeesManager is Initializable, AuthorizationGuardAccess, FeesWhitelist, 
     ///      Callable only by authorized accounts
     ///      Emits a {FeeWalletSet} event
     /// @param newFeeWallet New address of the fees wallet
-    function setFeesWallet(address newFeeWallet) external onlyAuthorizedAccess {
+    function setFeesWallet(address newFeeWallet) external onlyFeesManager {
         _setFeesWallet(newFeeWallet);
     }
 

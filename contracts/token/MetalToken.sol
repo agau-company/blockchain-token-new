@@ -9,6 +9,8 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {TokensLockable} from "../token/extensions/TokensLockable.sol";
 import {FeesManager} from "../management/FeesManager.sol";
 import {AuthorizationGuardAccess} from "../management/roles/AuthorizationGuardAccess.sol";
+import {AuthorizationGuard} from "../management/roles/AuthorizationGuard.sol";
+
 /**
  * @title MetalToken
  * @author
@@ -38,8 +40,6 @@ contract MetalToken is Initializable, ERC20Upgradeable, TokensLockable, Authoriz
         string calldata symbol_,
         address authorizationGuardAddress_
     ) public initializer {
-        // authorizedCaller = owner_;
-
         __AuthorizationGuardAccess_init(authorizationGuardAddress_);
 
         __TokensLockable_init(authorizationGuardAddress_);
@@ -51,7 +51,7 @@ contract MetalToken is Initializable, ERC20Upgradeable, TokensLockable, Authoriz
     ///      Callable only by authorized accounts
     /// @param to Receiver address
     /// @param amount Amount of the tokens to mint
-    function mintAndLock(address to, uint256 amount) external onlyTrustedContracts {
+    function mintAndLock(address to, uint256 amount) external onlyTokenManager {
         _addLockedBalance(to, amount);
         _mint(to, amount);
     }
@@ -60,7 +60,7 @@ contract MetalToken is Initializable, ERC20Upgradeable, TokensLockable, Authoriz
     ///      Callable only by authorized accounts
     /// @param to Token owner address
     /// @param amount Amount of the tokens to release
-    function release(address to, uint256 amount) external onlyTrustedContracts {
+    function release(address to, uint256 amount) external onlyTokenManager {
         _subLockedBalance(to, amount);
     }
 
@@ -68,7 +68,7 @@ contract MetalToken is Initializable, ERC20Upgradeable, TokensLockable, Authoriz
     ///      Callable only by authorized accounts
     /// @param from Token owner address
     /// @param amount Amount of the tokens to burn
-    function burn(address from, uint256 amount) external onlyTrustedContracts {
+    function burn(address from, uint256 amount) external onlyTokenManager {
         _burn(from, amount);
     }
 
@@ -77,7 +77,7 @@ contract MetalToken is Initializable, ERC20Upgradeable, TokensLockable, Authoriz
     /// @param from Token owner address
     /// @param to Receiver address
     /// @param amount Amount of the tokens to seize
-    function seizeLocked(address from, address to, uint256 amount) external onlyTrustedContracts {
+    function seizeLocked(address from, address to, uint256 amount) external onlyTokenManager {
         _subLockedBalance(from, amount);
         super._transfer(from, to, amount);
     }

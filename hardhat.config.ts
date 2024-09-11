@@ -186,7 +186,7 @@ const config: HardhatUserConfig = {
         privateVerification: false,
     },
     etherscan: {
-        apiKey: { sepolia: process.env.ETHERSCAN_API_KEY || "" },
+        apiKey: { sepolia: process.env.ETHERSCAN_API_KEY || "", bscTestnet: process.env.BSCSCAN_API_KEY || "" },
     },
     typechain: {
         target: `ethers-v6`,

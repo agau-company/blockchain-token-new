@@ -3,22 +3,20 @@ pragma solidity 0.8.22;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {WhitelistTypes} from "lib/agau-common/admin-ops/WhitelistTypes.sol";
-import {AuthorizationGuard} from "../roles/AuthorizationGuard.sol";
+import {AuthorizationGuardAccess} from "../roles/AuthorizationGuardAccess.sol";
 
 /**
  * @title TxFeeManager
  * @author
  * @dev Contract for managing transaction fees
  */
-abstract contract TxFeeManager is Initializable {
+abstract contract TxFeeManager is Initializable, AuthorizationGuardAccess {
     /// @dev Transfer fee rate
     uint256 private _txFeeRate;
     /// @dev Minimum transfer fee
     uint256 private _minTxFee;
     /// @dev Maximum transfer fee
     uint256 private _maxTxFee;
-
-    AuthorizationGuard private _authorizationGuard;
 
     /// @dev Emitted when the transfer fee rate has changed
     /// @param newTxFeeRate New transfer fee rate
@@ -32,14 +30,6 @@ abstract contract TxFeeManager is Initializable {
     error InvalidTxFeeRate();
     /// @dev Invalid minimum or maximum transfer fee passed
     error InvalidMinOrMaxTxValue();
-
-    modifier onlyAuthorizedManager() {
-        require(
-            _authorizationGuard.hasRole(_authorizationGuard.AUTHORIZED_ROLE(), msg.sender),
-            "Caller not authorized"
-        );
-        _;
-    }
 
     /// @dev Initializes the contract
     /// @param txFeeRate_ Initial transfer fee rate
@@ -57,14 +47,14 @@ abstract contract TxFeeManager is Initializable {
         _setTxFeeRate(txFeeRate_);
         _setMinMaxTxFee(minTxFee_, maxTxFee_);
 
-        _authorizationGuard = AuthorizationGuard(authorizationGuardAddress_);
+        __AuthorizationGuardAccess_init(authorizationGuardAddress_);
     }
 
     /// @dev Sets transfer fee rate
     ///      Callable only by authorized accounts
     ///      Emits a {TxFeeSet} event
     /// @param txFeeRate_ New transfer fee rate
-    function setTxFeeRate(uint256 txFeeRate_) external onlyAuthorizedManager {
+    function setTxFeeRate(uint256 txFeeRate_) external onlyFeesManager {
         _revertIfFeeRateInvalid(txFeeRate_);
         _setTxFeeRate(txFeeRate_);
     }
@@ -73,10 +63,7 @@ abstract contract TxFeeManager is Initializable {
     ///      Callable only by authorized accounts
     /// @param minTxFee_ New minimum transaction fee
     /// @param maxTxFee_ New maximum transaction fee
-    function setMinAndMaxTxFee(
-        uint256 minTxFee_,
-        uint256 maxTxFee_
-    ) external onlyAuthorizedManager {
+    function setMinAndMaxTxFee(uint256 minTxFee_, uint256 maxTxFee_) external onlyFeesManager {
         _revertIfInvalidMinOrMaxFee(minTxFee_, maxTxFee_);
         _setMinMaxTxFee(minTxFee_, maxTxFee_);
     }

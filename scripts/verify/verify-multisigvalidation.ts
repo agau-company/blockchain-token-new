@@ -1,31 +1,39 @@
-import { run } from "hardhat";
+import { ethers, run } from "hardhat";
+import { OpType } from "../src/full-deploy";
 
 //npx hardhat run scripts/verify/verify-multisigvalidation.ts --network sepolia
 export async function main(contractAddress: string, authorizationGuardAddress: string) {
-    // const contractAddress = "0xED24c72DfD37A6Be2912AF249Aa2734f65FFCeE6";
-    // const authorizationGuardAddress = "0x501D042bEE6acb3F3c303A6d50348F2345F8466E";
+
+    const [deployer, backendWallet, signer1, signer2, signer3, signer4] = await ethers.getSigners();
 
     const mintSigners = [
-        { signerAddress: "0xCBA19FC71b5C474e6726D18e7Ab380aea7eA64fD", roleName: "Warehouse admin", operationType: 0 },
-        { signerAddress: "0x56FcBC342D35ce908201407CA9cE6620BCcc4d9C", roleName: "Director", operationType: 0 },
-        { signerAddress: "0xC415B176F90C46EFe64dCB2608DF5394Aa36C49C", roleName: "Token manager", operationType: 0 },
-        { signerAddress: "0xff7774DC7FB785e41F5C0e04AF7db78897dC131f", roleName: "Auditor", operationType: 0 },
+        { signerAddress: signer1.address, roleName: "Warehouse admin", operationType: OpType.MINT_OP },
+        { signerAddress: signer2.address, roleName: "Director", operationType: OpType.MINT_OP },
+        { signerAddress: signer3.address, roleName: "Token manager", operationType: OpType.MINT_OP },
+        { signerAddress: signer4.address, roleName: "Auditor", operationType: OpType.MINT_OP },
     ];
 
     const releaseSigners = [
-        { signerAddress: "0xff7774DC7FB785e41F5C0e04AF7db78897dC131f", roleName: "Auditor", operationType: 1 },
+        { signerAddress: signer4.address, roleName: "Auditor", operationType: OpType.RELEASE_OP },
     ];
+
+    const multiSigSigners = [
+        { signerAddress: signer1.address, roleName: "Signature Manager", operationType: OpType.ADMIN_OP },
+    ];
+
 
     try {
         console.log(`verify multisig:`, {
             authorizationGuardAddress,
             mintSigners,
             releaseSigners,
+            multiSigSigners,
         })
         await run("verify:verify", {
             address: contractAddress,
             constructorArguments: [
                 authorizationGuardAddress,
+                multiSigSigners,
                 mintSigners,
                 releaseSigners,
             ],
@@ -37,10 +45,3 @@ export async function main(contractAddress: string, authorizationGuardAddress: s
         return false;
     }
 }
-
-// main()
-//     .then(() => process.exit(0))
-//     .catch((error) => {
-//         console.error(error);
-//         process.exit(1);
-//     });
