@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.22;
-import "hardhat/console.sol";
 
 import {AuthorizationGuard} from "./AuthorizationGuard.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {TokenOpTypes} from "../../../lib/agau-types/TokenOpTypes.sol";
 
 abstract contract AuthorizationGuardAccess is Initializable {
     AuthorizationGuard private _authorizationGuard;
 
     event LogAddress(string name, address logAddress);
+
+    error InvalidOperationType();
 
     modifier onlyAdminAccess() {
         require(
@@ -38,6 +40,14 @@ abstract contract AuthorizationGuardAccess is Initializable {
         require(
             _authorizationGuard.hasRole(_authorizationGuard.TOKEN_MANAGER_ROLE(), msg.sender),
             "Missing `TOKEN_MANAGER_ROLE`"
+        );
+        _;
+    }
+
+    modifier onlySignerRolesManager() {
+        require(
+            _authorizationGuard.hasRole(_authorizationGuard.SIGN_ROLES_MANAGER_ROLE(), msg.sender),
+            "Missing `SIGN_ROLES_MANAGER_ROLE`"
         );
         _;
     }
