@@ -22,9 +22,8 @@ import { getTokensMetadata, TokenIdentifier } from "../../../scripts/config/toke
 enum OpType {
     MINT_OP,
     RELEASE_OP,
-    ADMIN_OP
+    SIGN_MANAGER_OP
 }
-
 
 describe("Metal Token System", function () {
     let authorizationGuard: AuthorizationGuard;
@@ -46,6 +45,85 @@ describe("Metal Token System", function () {
     let adminOpSigners: SignerWithAddress[];
     let adminOpSignersArray: SignerEntityStruct[];
 
+    // Helper function to create and sign an instruction
+    async function createAndSignInstruction(
+        account: string,
+        weight: number,
+        metalId: number,
+        documentHash: string,
+        signers: SignerWithAddress[],
+        operationType: string
+    ) {
+        const instruction = {
+            account,
+            weight,
+            metalId,
+            documentHash,
+            signatureHash: ethers.ZeroHash,
+            signatures: [] as string[]
+        };
+
+        const messageHash = await multiSigValidation["getMessageHashCommon(string,(address,uint48,uint8,string))"](
+            operationType,
+            {
+                account: instruction.account,
+                weight: instruction.weight,
+                metalId: instruction.metalId,
+                documentHash: instruction.documentHash
+            }
+        );
+
+        const prefixedHash = ethers.hashMessage(ethers.getBytes(messageHash));
+        instruction.signatureHash = prefixedHash;
+
+        for (const signer of signers) {
+            const signature = await signer.signMessage(ethers.getBytes(prefixedHash));
+            instruction.signatures.push(signature);
+        }
+
+        return instruction;
+    }
+
+
+    // Helper function to mint and lock tokens
+    async function mintAndLockTokens(
+        account: string,
+        weight: number,
+        metalId: number,
+        documentHash: string,
+        signers: SignerWithAddress[]
+    ) {
+        const instruction = await createAndSignInstruction(
+            account,
+            weight,
+            metalId,
+            documentHash,
+            signers,
+            "mintAndLockTokens"
+        );
+        return tokenManager.mintAndLockTokens([instruction]);
+    }
+
+    // Helper function to release tokens
+    async function releaseTokens(
+        account: string,
+        weight: number,
+        metalId: number,
+        documentHash: string,
+        signers: SignerWithAddress[]
+    ) {
+        const instruction = await createAndSignInstruction(
+            account,
+            weight,
+            metalId,
+            documentHash,
+            signers,
+            "releaseTokens"
+        );
+        return tokenManager.releaseTokens([instruction]);
+    }
+
+
 
     beforeEach(async function () {
         [owner, admin, user1, user2, ...companyWallets] = await ethers.getSigners();
@@ -54,7 +132,7 @@ describe("Metal Token System", function () {
         const authorized = [owner, admin];
 
         adminOpSignersArray = [
-            { signerAddress: owner.address, roleName: "Signature Operator", operationType: OpType.ADMIN_OP },
+            { signerAddress: owner.address, roleName: "Signature Operator", operationType: OpType.SIGN_MANAGER_OP },
         ]
         mintSignersArray = [
             { signerAddress: companyWallets[0].address, roleName: "Warehouse admin", operationType: OpType.MINT_OP },
@@ -77,6 +155,11 @@ describe("Metal Token System", function () {
             nonce: (await owner.getNonce()) + 5,
         });
 
+        const expectedMultiSigValidationContractAddress = ethers.getCreateAddress({
+            from: owner.address,
+            nonce: (await owner.getNonce()) + 1,
+        });
+
         // Deploy `authorizationGuard`
         authorizationGuard = await trackDeploymentNoLogs(
             () => deployment.deployAuthorizationGuard(owner, {
@@ -91,13 +174,17 @@ describe("Metal Token System", function () {
         multiSigValidation = await trackDeploymentNoLogs(
             () => deployment.deployMultiSigValidation(owner, {
                 authorizationGuard: authorizationGuard.target,
-                multiSigSigners: adminOpSignersArray,
-                mintSigners: mintSignersArray,
-                releaseSigners: releaseSignersArray
+                multiSigSigners: adminOpSignersArray, //TODO: remove
+                mintSigners: mintSignersArray,        //TODO: remove
+                releaseSigners: releaseSignersArray   // TODO: remove
             }),
             `MultiSigValidation`
         ) as MultiSigValidation;
 
+        // Grant role to signature contract
+        await authorizationGuard.grantRole(await authorizationGuard.SIGN_ROLES_MANAGER_ROLE(), multiSigValidation.target);
+
+        await multiSigValidation.initialize(adminOpSignersArray, mintSignersArray, releaseSignersArray);
 
         // Deploy `MetalToken` beacon
         metalTokenBeacon = await trackDeploymentNoLogs(
@@ -174,20 +261,53 @@ describe("Metal Token System", function () {
     });
 
     describe("Minting and Locking", function () {
-        it("Silver Token: should mint and lock tokens with proper signatures ", async function () {
+        it("should mint and lock silver tokens with proper signatures ", async function () {
+            const weight = 1;
+            const amountOut = ethers.parseEther(weight.toString());
 
+            // Mint and lock tokens
+            await expect(await mintAndLockTokens(user1.address, weight, 1, ethers.id("document1"), mintSigners))
+                .to.emit(silverToken, "Transfer")
+                .withArgs(ethers.ZeroAddress, user1.address, amountOut);
+
+            // Check balances
+            expect(await silverToken.balanceOf(user1.address)).to.equal(0); // All tokens should be locked
+            expect(await silverToken.lockedBalanceOf(user1.address)).to.equal(amountOut);
+        });
+
+        it("should mint and lock gold tokens with proper signatures ", async function () {
+            const weight = 1;
+            const amountOut = ethers.parseEther(weight.toString());
+
+            await expect(mintAndLockTokens(user1.address, 1, 0, ethers.id("document1"), mintSigners))
+                .to.emit(goldToken, "Transfer")
+                .withArgs(ethers.ZeroAddress, user1.address, amountOut);
+
+            // Check balances
+            expect(await goldToken.balanceOf(user1.address)).to.equal(0); // All tokens should be locked
+            expect(await goldToken.lockedBalanceOf(user1.address)).to.equal(amountOut);
+
+        });
+        it("should not allow using the same hash ", async function () {
+            const weight = 1;
+
+            // Mint and lock tokens once
+            await mintAndLockTokens(user1.address, weight, 1, ethers.id("document1"), mintSigners);
+
+            // Mint and lock tokens again with same hash
+            await expect(mintAndLockTokens(user1.address, weight, 1, ethers.id("document1"), mintSigners))
+                .to.be.revertedWith("Hash has already been used");
+        });
+        it("should fail to mint and lock tokens with insufficient signatures", async function () {
             const instruction = {
                 account: user1.address,
-                weight: 1, // 1 gram
+                weight: 1,
                 metalId: 1, // Silver Token
                 documentHash: ethers.id("document1"),
                 signatureHash: ethers.ZeroHash,
                 signatures: [] as string[]
             };
-            const amountOut = ethers.parseEther(instruction.weight.toString());
-            const metalToken = instruction.metalId === 1 ? silverToken : goldToken;
 
-            // Generate signature hash
             const messageHash = await multiSigValidation["getMessageHashCommon(string,(address,uint48,uint8,string))"](
                 "mintAndLockTokens",
                 {
@@ -197,140 +317,75 @@ describe("Metal Token System", function () {
                     documentHash: instruction.documentHash
                 });
 
-            // Create the Ethereum Signed Message
             const prefixedHash = ethers.hashMessage(ethers.getBytes(messageHash));
             instruction.signatureHash = prefixedHash;
 
-            // Sign the message hash with required signers
-            for (let i = 0; i < mintSigners.length; i++) {
-                const signature = await mintSigners[i].signMessage(ethers.getBytes(prefixedHash));
-                instruction.signatures.push(signature);
-            }
+            // Sign with only one signer (insufficient)
+            const signature = await mintSigners[0].signMessage(ethers.getBytes(prefixedHash));
+            instruction.signatures.push(signature);
 
-            // Mint and lock tokens
             await expect(tokenManager.mintAndLockTokens([instruction]))
-                .to.emit(metalToken, "Transfer")
-                .withArgs(ethers.ZeroAddress, user1.address, amountOut);
-
-            // Check balances
-            expect(await metalToken.balanceOf(user1.address)).to.equal(0); // All tokens should be locked
-            expect(await metalToken.lockedBalanceOf(user1.address)).to.equal(amountOut);
+                .to.be.revertedWith("Invalid number of signatures");
         });
-        it("Gold Token: should mint and lock tokens with proper signatures ", async function () {
+        it("should fail to mint and lock tokens with invalid signer", async function () {
+            // Replace the last signer with an invalid signer
+            let signers = mintSigners;
+            signers[signers.length - 1] = user2;
 
-            const instruction = {
-                account: user1.address,
-                weight: 1, // 1 gram
-                metalId: 0, // Gold metal
-                documentHash: ethers.id("document1"),
-                signatureHash: ethers.ZeroHash,
-                signatures: [] as string[]
-            };
-            const amountOut = ethers.parseEther(instruction.weight.toString());
-            const metalToken = instruction.metalId === 1 ? silverToken : goldToken;
-
-            // Generate signature hash
-            const messageHash = await multiSigValidation["getMessageHashCommon(string,(address,uint48,uint8,string))"](
-                "mintAndLockTokens",
-                {
-                    account: instruction.account,
-                    weight: instruction.weight,
-                    metalId: instruction.metalId,
-                    documentHash: instruction.documentHash
-                });
-
-            // Create the Ethereum Signed Message
-            const prefixedHash = ethers.hashMessage(ethers.getBytes(messageHash));
-            instruction.signatureHash = prefixedHash;
-
-            // Sign the message hash with required signers
-            for (let i = 0; i < mintSigners.length; i++) {
-                const signature = await mintSigners[i].signMessage(ethers.getBytes(prefixedHash));
-                instruction.signatures.push(signature);
-            }
-
-            // Mint and lock tokens
-            await expect(tokenManager.mintAndLockTokens([instruction]))
-                .to.emit(metalToken, "Transfer")
-                .withArgs(ethers.ZeroAddress, user1.address, amountOut);
-
-            // Check balances
-            expect(await metalToken.balanceOf(user1.address)).to.equal(0); // All tokens should be locked
-            expect(await metalToken.lockedBalanceOf(user1.address)).to.equal(amountOut);
+            await expect(mintAndLockTokens(user1.address, 1, 0, ethers.id("document1"), signers))
+                .to.be.revertedWith("Not enough valid signatures");
         });
     });
 
     describe("Releasing Tokens", function () {
-        it("Gold Token: should release locked tokens with proper signatures", async function () {
+        it("should release locked gold tokens with proper signatures", async function () {
             const tokenType = 0;
-
-            // Mint tokens
-            const mintInstruction = {
-                account: user1.address,
-                weight: 1000000,
-                metalId: tokenType,
-                documentHash: ethers.id("document1"),
-                signatureHash: ethers.ZeroHash,
-                signatures: [] as string[]
-            };
-
-            const amountOut = ethers.parseEther(mintInstruction.weight.toString());
-            const metalToken = mintInstruction.metalId === 1 ? silverToken : goldToken;
-
-
-
-            // Generate signature hash
-            const messageHash = await multiSigValidation["getMessageHashCommon(string,(address,uint48,uint8,string))"]("mintAndLockTokens",
-                mintInstruction);
-
-            // Create the Ethereum Signed Message
-            const prefixedHashMint = ethers.hashMessage(ethers.getBytes(messageHash));
-
-            mintInstruction.signatureHash = prefixedHashMint;
-
-            // Sign the mint message hash with required signers
-            for (let i = 0; i < mintSigners.length; i++) {
-                const signature = await mintSigners[i].signMessage(ethers.getBytes(prefixedHashMint));
-                mintInstruction.signatures.push(signature);
-            }
+            const weight = 1000000;
+            const amountOut = ethers.parseEther(weight.toString());
+            const metalToken = tokenType ? silverToken : goldToken;
 
             // Mint and lock tokens
-            await tokenManager.mintAndLockTokens([mintInstruction]);
-
-            // Release the tokens
-            const releaseInstruction = {
-                account: user1.address,
-                weight: 1000000,
-                metalId: tokenType,
-                documentHash: ethers.id("document2"),
-                signatureHash: ethers.ZeroHash,
-                signatures: [] as string[]
-            };
-
-            // Generate signature hash for release
-            const releaseMessageHash = await multiSigValidation["getMessageHashCommon(string,(address,uint48,uint8,string))"](
-                "releaseTokens",
-                releaseInstruction
-            );
-
-            // Create the Ethereum Signed Message
-            const prefixedHashRelease = ethers.hashMessage(ethers.getBytes(releaseMessageHash));
-            releaseInstruction.signatureHash = prefixedHashRelease;
-
-            // Sign the message hash with required release signers
-            for (let i = 0; i < releaseSigners.length; i++) {
-                const signature = await releaseSigners[i].signMessage(ethers.getBytes(prefixedHashRelease));
-                releaseInstruction.signatures.push(signature);
-            }
+            await mintAndLockTokens(user1.address, weight, tokenType, ethers.id("document1"), mintSigners);
 
             // Release tokens
-            await expect(tokenManager.releaseTokens([releaseInstruction]))
+            await expect(releaseTokens(user1.address, weight, tokenType, ethers.id("document2"), releaseSigners))
                 .to.emit(metalToken, "LockedBalanceChanged")
                 .withArgs(user1.address, 0);
 
             // Check balances after release
             expect(await metalToken.balanceOf(user1.address)).to.equal(amountOut);
             expect(await metalToken.lockedBalanceOf(user1.address)).to.equal(0);
+        });
+        it("should release locked silver tokens with proper signatures", async function () {
+            const tokenType = 1;
+            const weight = 1000000;
+            const amountOut = ethers.parseEther(weight.toString());
+            const metalToken = tokenType ? silverToken : goldToken;
+
+            // Mint and lock tokens
+            await mintAndLockTokens(user1.address, weight, tokenType, ethers.id("document1"), mintSigners);
+
+            // Release tokens
+            await expect(releaseTokens(user1.address, weight, tokenType, ethers.id("document2"), releaseSigners))
+                .to.emit(metalToken, "LockedBalanceChanged")
+                .withArgs(user1.address, 0);
+
+            // Check balances after release
+            expect(await metalToken.balanceOf(user1.address)).to.equal(amountOut);
+            expect(await metalToken.lockedBalanceOf(user1.address)).to.equal(0);
+        });
+        it("should fail to release tokens with insufficient balance", async function () {
+            const tokenType = 0;
+            const weight = 1000000;
+            const amountOut = ethers.parseEther(weight.toString());
+            const metalToken = tokenType ? silverToken : goldToken;
+
+            await expect(mintAndLockTokens(user1.address, weight, tokenType, ethers.id("document1"), mintSigners))
+                .to.emit(metalToken, "Transfer")
+                .withArgs(ethers.ZeroAddress, user1.address, amountOut);
+
+            await expect(releaseTokens(user1.address, weight + 100, 0, ethers.id("document7"), releaseSigners))
+                .to.be.revertedWith("Insufficient locked balance");
         });
     });
 

@@ -81,22 +81,40 @@ describe("FeesManager Access Control", function () {
 
             expect(await feesManager.txFeeRate()).to.equal(newFeeRate);
         });
+        it("should not allow non-admin to update transaction fee rate", async function () {
+            const newFeeRate = 200; // 2%
+            await expect(feesManager.connect(user1).setTxFeeRate(newFeeRate))
+                .to.be.revertedWith("Missing `FEES_MANAGER_ROLE`");
+        });
 
         it("should allow admin to update min and max transaction fees", async function () {
             const newMinFee = ethers.parseEther("0.001");
             const newMaxFee = ethers.parseEther("1");
 
+            // Set the new min and max transaction fees
             await expect(feesManager.connect(owner).setMinAndMaxTxFee(newMinFee, newMaxFee))
                 .to.emit(feesManager, "MinAndMaxTxFeeSet")
                 .withArgs(newMinFee, newMaxFee);
 
+            // Min and max fees should match the new values
             expect(await feesManager.minTxFee()).to.equal(newMinFee);
             expect(await feesManager.maxTxFee()).to.equal(newMaxFee);
+        });
+
+        it("should not allow non-admin to update min and max transaction fees", async function () {
+            const newMinFee = ethers.parseEther("0.001");
+            const newMaxFee = ethers.parseEther("1");
+
+            // Set the new min and max transaction fees
+            await expect(feesManager.connect(user1).setMinAndMaxTxFee(newMinFee, newMaxFee))
+                .to.be.revertedWith("Missing `FEES_MANAGER_ROLE`");
         });
 
         it("should allow admin to add an account to the zero fee group", async function () {
             const accountToWhitelist = user1.address;
             const SPECIAL_AGAU_GROUP_ID = await feesManager.SPECIAL_AGAU_GROUP_ID();
+
+            // Add the account to the zero fee group
             await expect(feesManager.connect(admin).setGroupForUser(
                 GroupType.TxFee,
                 SPECIAL_AGAU_GROUP_ID,
@@ -105,13 +123,15 @@ describe("FeesManager Access Control", function () {
                 .to.emit(feesManager, "UserToFeeGroupSet")
                 .withArgs(GroupType.TxFee, accountToWhitelist, SPECIAL_AGAU_GROUP_ID);
 
+            // Check that the account is in the zero fee group
             const groupId = await feesManager.discountGroupIdForUser(GroupType.TxFee, accountToWhitelist);
             expect(groupId).to.equal(SPECIAL_AGAU_GROUP_ID);
         });
 
         it("should allow admin to remove an account from the zero fee group", async function () {
             const accountToRemove = user1.address;
-            // First, add the account to the zero fee group
+
+            // Add the account to the zero fee group
             const SPECIAL_AGAU_GROUP_ID = await feesManager.SPECIAL_AGAU_GROUP_ID();
             await feesManager.connect(owner).setGroupForUser(
                 GroupType.TxFee,
@@ -119,7 +139,7 @@ describe("FeesManager Access Control", function () {
                 accountToRemove
             );
 
-            // Then remove it by setting it to group 0
+            // Remove the account from the zero fee group
             await expect(feesManager.connect(admin).setGroupForUser(
                 GroupType.TxFee,
                 0,
@@ -130,6 +150,18 @@ describe("FeesManager Access Control", function () {
 
             const groupId = await feesManager.discountGroupIdForUser(GroupType.TxFee, accountToRemove);
             expect(groupId).to.equal(0);
+        });
+        it("should not allow non-admin to remove an account from the zero fee group", async function () {
+            const accountToRemove = user2.address;
+
+            // Add the account to the zero fee group
+            const SPECIAL_AGAU_GROUP_ID = await feesManager.SPECIAL_AGAU_GROUP_ID();
+            await expect(feesManager.connect(user1).setGroupForUser(
+                GroupType.TxFee,
+                SPECIAL_AGAU_GROUP_ID,
+                accountToRemove
+            )).to.be.revertedWith("Missing `FEES_MANAGER_ROLE`");
+
         });
     });
 

@@ -12,7 +12,7 @@ import { getTokensMetadata, TokenIdentifier } from "../../../scripts/config/toke
 enum OpType {
     MINT_OP,
     RELEASE_OP,
-    ADMIN_OP
+    SIGN_MANAGER_OP
 }
 
 describe("MultiSigValidation", function () {
@@ -39,6 +39,119 @@ describe("MultiSigValidation", function () {
     let admin: SignerWithAddress;
     let user: SignerWithAddress;
 
+    async function signMessages(signerAddress: string, roleName: string, operationType: OpType, functionName: string, signers: SignerWithAddress[]) {
+
+        const instruction = {
+            signData: {
+                signerAddress: signerAddress,
+                roleName: roleName,
+                operationType: operationType
+            },
+            signatureHash: ethers.ZeroHash,
+            signatures: [] as string[]
+        };
+
+        // Create valid signatures from existing signers
+        const messageHash = await multiSigValidation["getMessageHashCommon(string,(address,string,uint8))"](functionName, instruction.signData);
+        const prefixedHash = ethers.hashMessage(ethers.getBytes(messageHash));
+        const signatures = await Promise.all(
+            signers.map(signer => signer.signMessage(ethers.getBytes(prefixedHash)))
+        );
+        instruction.signatureHash = prefixedHash;
+        instruction.signatures = signatures;
+        return instruction;
+    }
+
+    async function addSigners(signerAddress: string, roleName: string, operationType: OpType, signers: SignerWithAddress[]) {
+        const instruction = await signMessages(signerAddress, roleName, operationType, "addSigners", signers);
+        return multiSigValidation.addSigners([instruction]);
+    }
+
+    async function removeSigners(signerAddress: string, roleName: string, operationType: OpType, signers: SignerWithAddress[]) {
+        const instruction = await signMessages(signerAddress, roleName, operationType, "removeSigners", signers);
+        return multiSigValidation.removeSigners([instruction]);
+    }
+
+
+    // Helper function to create and sign an instruction
+    async function createAndSignInstruction(
+        account: string,
+        weight: number,
+        metalId: number,
+        documentHash: string,
+        signers: SignerWithAddress[],
+        operationType: string
+    ) {
+        const instruction = {
+            account,
+            weight,
+            metalId,
+            documentHash,
+            signatureHash: ethers.ZeroHash,
+            signatures: [] as string[]
+        };
+
+        const messageHash = await multiSigValidation["getMessageHashCommon(string,(address,uint48,uint8,string))"](
+            operationType,
+            {
+                account: instruction.account,
+                weight: instruction.weight,
+                metalId: instruction.metalId,
+                documentHash: instruction.documentHash
+            }
+        );
+
+        const prefixedHash = ethers.hashMessage(ethers.getBytes(messageHash));
+        instruction.signatureHash = prefixedHash;
+
+        for (const signer of signers) {
+            const signature = await signer.signMessage(ethers.getBytes(prefixedHash));
+            instruction.signatures.push(signature);
+        }
+
+        return instruction;
+    }
+
+
+    // Helper function to mint and lock tokens
+    async function mintAndLockTokens(
+        account: string,
+        weight: number,
+        metalId: number,
+        documentHash: string,
+        signers: SignerWithAddress[]
+    ) {
+        const instruction = await createAndSignInstruction(
+            account,
+            weight,
+            metalId,
+            documentHash,
+            signers,
+            "mintAndLockTokens"
+        );
+        return tokenManager.mintAndLockTokens([instruction]);
+    }
+
+    // Helper function to release tokens
+    async function releaseTokens(
+        account: string,
+        weight: number,
+        metalId: number,
+        documentHash: string,
+        signers: SignerWithAddress[]
+    ) {
+        const instruction = await createAndSignInstruction(
+            account,
+            weight,
+            metalId,
+            documentHash,
+            signers,
+            "releaseTokens"
+        );
+        return tokenManager.releaseTokens([instruction]);
+    }
+
+
     beforeEach(async function () {
         [owner, admin, user1, user2, ...companyWallets] = await ethers.getSigners();
 
@@ -58,7 +171,7 @@ describe("MultiSigValidation", function () {
         ];
 
         adminOpSignersArray = [
-            { signerAddress: owner.address, roleName: "Signature Operator", operationType: OpType.ADMIN_OP },
+            { signerAddress: owner.address, roleName: "Signature Operator", operationType: OpType.SIGN_MANAGER_OP },
         ]
 
         adminOpSigners = [owner];
@@ -91,6 +204,12 @@ describe("MultiSigValidation", function () {
             }),
             `MultiSigValidation`
         ) as MultiSigValidation;
+
+        // Grant role to signature contract
+        await authorizationGuard.grantRole(await authorizationGuard.SIGN_ROLES_MANAGER_ROLE(), multiSigValidation.target);
+
+        // Setup the signers
+        await multiSigValidation.initialize(adminOpSignersArray, mintOpSignersArray, releaseOpSignersArray);
 
 
         // Deploy `MetalToken` beacon
@@ -183,59 +302,101 @@ describe("MultiSigValidation", function () {
         it("should allow adding a new signer", async function () {
             const newSigner = user1.address;
 
-            const instruction = {
-                signData: {
-                    signerAddress: newSigner,
-                    roleName: "NewSigner",
-                    operationType: OpType.ADMIN_OP
-                },
-                signatureHash: ethers.ZeroHash,
-                signatures: [] as string[]
-            };
+            await expect(addSigners(newSigner, "NewSigner", OpType.SIGN_MANAGER_OP, adminOpSigners)).to.emit(multiSigValidation, "SignerAdded")
+                .withArgs("NewSigner", newSigner, OpType.SIGN_MANAGER_OP);
 
-            // Create valid signatures from existing signers
-            const messageHash = await multiSigValidation["getMessageHashCommon(string,(address,string,uint8))"]("addSigners", instruction.signData);
+            expect(await multiSigValidation.isSigner(newSigner, OpType.SIGN_MANAGER_OP)).to.be.true;
+        });
+        it("should not allow adding a new signer with invalid signers group", async function () {
+            const newSigner = user1.address;
 
-            // Hash the message with the Ethereum prefix
-            const prefixedHash = ethers.hashMessage(ethers.getBytes(messageHash));
+            await expect(addSigners(newSigner, "NewSigner", OpType.SIGN_MANAGER_OP, [mintOpSigners[0]])).to.be.revertedWith("Not enough valid signatures");
 
-            const signatures = await Promise.all(
-                adminOpSigners.map(signer => signer.signMessage(ethers.getBytes(prefixedHash)))
-            );
-            instruction.signatureHash = prefixedHash;
-            instruction.signatures = signatures;
-
-            await expect(multiSigValidation.connect(admin).addSigners([instruction]))
-                .to.emit(multiSigValidation, "SignerAdded")
-                .withArgs("NewSigner", newSigner, OpType.ADMIN_OP);
-
-            expect(await multiSigValidation.isSigner(newSigner, OpType.ADMIN_OP)).to.be.true;
+            // expect(await multiSigValidation.isSigner(newSigner, OpType.SIGN_MANAGER_OP)).to.be.true;
         });
         it("should allow removing a signer", async function () {
-            const instruction = {
-                signData: {
-                    signerAddress: mintOpSignersArray[0].signerAddress,
-                    roleName: mintOpSignersArray[0].roleName,
-                    operationType: mintOpSignersArray[0].operationType
-                },
-                signatureHash: ethers.ZeroHash,
-                signatures: [] as string[]
-            };
-
-            // Create valid signatures from existing signers
-            const messageHash = await multiSigValidation["getMessageHashCommon(string,(address,string,uint8))"]("removeSigners", instruction.signData);
-            const prefixedHash = ethers.hashMessage(ethers.getBytes(messageHash));
-            const signatures = await Promise.all(
-                adminOpSigners.map(signer => signer.signMessage(ethers.getBytes(prefixedHash)))
-            );
-            instruction.signatureHash = prefixedHash;
-            instruction.signatures = signatures;
-
-            await expect(multiSigValidation.connect(admin).removeSigners([instruction]))
+            await expect(removeSigners(mintOpSignersArray[0].signerAddress as string, mintOpSignersArray[0].roleName, mintOpSignersArray[0].operationType, adminOpSigners))
                 .to.emit(multiSigValidation, "SignerRemoved")
                 .withArgs(mintOpSignersArray[0].roleName, mintOpSignersArray[0].signerAddress, mintOpSignersArray[0].operationType);
 
             expect(await multiSigValidation.isSigner(mintOpSignersArray[0].signerAddress, mintOpSignersArray[0].operationType)).to.be.false;
+        });
+        it("should mint and lock tokens with proper signatures after changing operation signers", async function () {
+            const message = {
+                account: user1.address,
+                weight: 100,
+                metalId: 1,
+                documentHash: "0x1234567890"
+            };
+            const metalToken = message.metalId === 0 ? goldToken : silverToken;
+            const amountOut = ethers.parseEther(message.weight.toString());
+
+            await expect(removeSigners(mintOpSignersArray[0].signerAddress as string, mintOpSignersArray[0].roleName, mintOpSignersArray[0].operationType, adminOpSigners))
+                .to.emit(multiSigValidation, "SignerRemoved")
+                .withArgs(mintOpSignersArray[0].roleName, mintOpSignersArray[0].signerAddress, mintOpSignersArray[0].operationType);
+
+            expect(await multiSigValidation.isSigner(mintOpSignersArray[0].signerAddress, mintOpSignersArray[0].operationType)).to.be.false;
+
+
+            // Remove signer at index 0
+            let newMintOpSigners = mintOpSigners.slice(1);
+
+            // Use new signers array without the signer at index 0
+            await expect(mintAndLockTokens(message.account, message.weight, message.metalId, message.documentHash, newMintOpSigners))
+                .to.emit(metalToken, "Transfer")
+                .withArgs(ethers.ZeroAddress, message.account, amountOut);
+
+
+
+            await expect(releaseTokens(message.account, message.weight, message.metalId, message.documentHash, releaseOpSigners))
+                .to.emit(metalToken, "LockedBalanceChanged")
+                .withArgs(user1.address, 0);
+        });
+        it("should release tokens with proper signatures after adding a signer to release operation", async function () {
+            const toAdd = {
+                signerAddress: user1.address,
+                roleName: "New Signer",
+                operationType: OpType.RELEASE_OP
+            }
+            const message = {
+                account: user1.address,
+                weight: 100,
+                metalId: 1,
+                documentHash: "0x1234567890"
+            };
+            const metalToken = message.metalId === 0 ? goldToken : silverToken;
+            const amountOut = ethers.parseEther(message.weight.toString());
+
+            await expect(addSigners(toAdd.signerAddress as string, toAdd.roleName, toAdd.operationType, adminOpSigners))
+                .to.emit(multiSigValidation, "SignerAdded")
+                .withArgs(toAdd.roleName, toAdd.signerAddress, toAdd.operationType);
+
+            expect(await multiSigValidation.isSigner(toAdd.signerAddress, toAdd.operationType)).to.be.true;
+
+
+            await expect(mintAndLockTokens(message.account, message.weight, message.metalId, message.documentHash, mintOpSigners))
+                .to.emit(metalToken, "Transfer")
+                .withArgs(ethers.ZeroAddress, message.account, amountOut);
+
+
+            // Remove signer at index 0
+            let newReleaseOpSigners = releaseOpSigners;
+            newReleaseOpSigners.push(user1)
+
+            // Use new signers array without the signer at index 0
+            await expect(releaseTokens(message.account, message.weight, message.metalId, message.documentHash, newReleaseOpSigners))
+                .to.emit(metalToken, "LockedBalanceChanged")
+                .withArgs(user1.address, 0);
+        });
+        it("should not allow removing signer that will result in no signers for role", async function () {
+            const toRemove = {
+                signerAddress: releaseOpSignersArray[0].signerAddress as string,
+                roleName: releaseOpSignersArray[0].roleName,
+                operationType: releaseOpSignersArray[0].operationType
+            }
+
+            await expect(removeSigners(toRemove.signerAddress as string, toRemove.roleName, toRemove.operationType, releaseOpSigners))
+                .to.be.revertedWith('Minimum number of signers would be violated');
         });
     });
 
@@ -267,6 +428,8 @@ describe("MultiSigValidation", function () {
             await expect(multiSigValidation.connect(owner).verifyCommonOpSignature("testFunction", OpType.MINT_OP, instruction)).to.emit(multiSigValidation, "SignatureValidated");
 
         });
+
+
     });
 
     describe("Getter Functions", function () {
