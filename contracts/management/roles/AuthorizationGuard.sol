@@ -2,6 +2,7 @@
 pragma solidity ^0.8.22;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
+import {TokenOpTypes} from "lib/agau-types/TokenOpTypes.sol";
 
 /**
  * Deploy AuthorizationGuard first. Pass to the constructor the administrator addresses
@@ -20,15 +21,26 @@ contract AuthorizationGuard is AccessControl {
     // Can call functions in `TokenManager` contract
     bytes32 public constant TOKEN_MANAGER_ROLE = keccak256("TOKEN_MANAGER_ROLE");
 
+    bytes32 public constant MINT_SIGNER_ROLE = keccak256("MINT_SIGNER_ROLE");
+    bytes32 public constant RELEASE_SIGNER_ROLE = keccak256("RELEASE_SIGNER_ROLE");
+    bytes32 public constant SIGNATURE_MANAGER_ROLE = keccak256("SIGNATURE_MANAGER_ROLE");
+    bytes32 public constant SIGN_ROLES_MANAGER_ROLE = keccak256("SIGN_ROLES_MANAGER_ROLE");
+
     event LogAddress(string name, address logAddress);
 
     mapping(address => bool) private trustedContracts_;
+
+    address private _multiSignValidationAddress;
+
+    error InvalidOperationType();
 
     constructor(
         address[] memory admins,
         address[] memory authorizedAccounts,
         address[] memory trustedContractAddresses
     ) {
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+
         /// Assign admin roles to admin accounts
         for (uint256 i = 0; i < admins.length; i++) {
             _grantRole(DEFAULT_ADMIN_ROLE, admins[i]);
@@ -54,6 +66,11 @@ contract AuthorizationGuard is AccessControl {
 
     modifier onlyAuthorizedAccess() {
         require(hasRole(AUTHORIZED_ROLE, msg.sender), "Missing `AUTHORIZED_ROLE`");
+        _;
+    }
+
+    modifier onlySignerRolesManager() {
+        require(hasRole(SIGN_ROLES_MANAGER_ROLE, msg.sender), "Missing `SIGN_ROLES_MANAGER_ROLE`");
         _;
     }
 
@@ -90,5 +107,37 @@ contract AuthorizationGuard is AccessControl {
                 revokeRole(AUTHORIZED_ROLE, accounts[i]);
             }
         }
+    }
+
+    function setSignerRole(
+        address signer,
+        TokenOpTypes.OpType operationType,
+        bool canSign,
+        address originalSigner
+    ) external onlySignerRolesManager returns (bool) {
+        require(hasRole(AUTHORIZED_ROLE, originalSigner), "Missing `AUTHORIZED_ROLE`");
+        if (canSign) {
+            if (operationType == TokenOpTypes.OpType.MINT_OP) {
+                _grantRole(MINT_SIGNER_ROLE, signer);
+            } else if (operationType == TokenOpTypes.OpType.RELEASE_OP) {
+                _grantRole(RELEASE_SIGNER_ROLE, signer);
+            } else if (operationType == TokenOpTypes.OpType.SIGN_MANAGER_OP) {
+                _grantRole(SIGNATURE_MANAGER_ROLE, signer);
+            } else {
+                revert InvalidOperationType();
+            }
+        } else {
+            if (operationType == TokenOpTypes.OpType.MINT_OP) {
+                _revokeRole(MINT_SIGNER_ROLE, signer);
+            } else if (operationType == TokenOpTypes.OpType.RELEASE_OP) {
+                _revokeRole(RELEASE_SIGNER_ROLE, signer);
+            } else if (operationType == TokenOpTypes.OpType.SIGN_MANAGER_OP) {
+                _revokeRole(SIGNATURE_MANAGER_ROLE, signer);
+            } else {
+                revert InvalidOperationType();
+            }
+        }
+
+        return true;
     }
 }
