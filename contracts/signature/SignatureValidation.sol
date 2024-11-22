@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
+import {AuthorizationGuard} from "../management/roles/AuthorizationGuard.sol";
 import {AuthorizationGuardAccess} from "../management/roles/AuthorizationGuardAccess.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {TokenOpTypes} from "lib/agau-types/TokenOpTypes.sol";
-
 /**
  * @title MultiSigValidation
  * @dev MultiSigValidation is a contract for managing multi-signature validation,
@@ -25,12 +25,17 @@ contract MultiSigValidation is AuthorizationGuardAccess {
         TokenOpTypes.OpType operationType;
     }
 
-    uint8 private constant MAX_SIGNERS = 15;
-    uint8 private constant MIN_REQUIRED_SIGNATURES = 1;
+    bool public isInitialized = false;
 
-    mapping(TokenOpTypes.OpType => mapping(address => string)) public roles;
-    mapping(TokenOpTypes.OpType => mapping(uint256 => address)) public unsortedSignersRegistry;
+    AuthorizationGuard public _authorizationGuard;
+
+    uint8 public constant MAX_SIGNERS = 15;
+    uint8 public constant MIN_REQUIRED_SIGNATURES = 1;
+
     mapping(TokenOpTypes.OpType => uint256) public requiredSignatures;
+    mapping(TokenOpTypes.OpType => mapping(address => string)) public roles;
+
+    mapping(TokenOpTypes.OpType => mapping(uint256 => address)) public unsortedSignersRegistry;
 
     mapping(TokenOpTypes.OpType => mapping(bytes32 => mapping(address => bool))) public signatures;
     mapping(bytes32 => uint256) public signatureCount;
@@ -53,18 +58,20 @@ contract MultiSigValidation is AuthorizationGuardAccess {
     );
 
     /**
-     * @dev Initializes the contract by setting the authorization guard address and adding initial signers.
+     * @dev Initializes the contract by setting the authorization guard address.
      * @param _authorizationGuardAddress Address of the authorization guard.
-     * @param _mintSigners Array of initial mint signers.
-     * @param _releaseSigners Array of initial release signers.
      */
-    constructor(
-        address _authorizationGuardAddress,
+    constructor(address _authorizationGuardAddress) {
+        __AuthorizationGuardAccess_init(_authorizationGuardAddress);
+        _authorizationGuard = AuthorizationGuard(_authorizationGuardAddress);
+    }
+
+    function initialize(
         SignerEntity[] memory _multiSigSigners,
         SignerEntity[] memory _mintSigners,
         SignerEntity[] memory _releaseSigners
-    ) {
-        __AuthorizationGuardAccess_init(_authorizationGuardAddress);
+    ) external {
+        require(!isInitialized, "Already initialized");
         require(
             _mintSigners.length > 0 &&
                 _mintSigners.length <= MAX_SIGNERS &&
@@ -84,6 +91,8 @@ contract MultiSigValidation is AuthorizationGuardAccess {
         for (uint8 i = 0; i < _multiSigSigners.length; i++) {
             _addSigner(_multiSigSigners[i]);
         }
+
+        isInitialized = true;
     }
 
     /**
@@ -193,7 +202,7 @@ contract MultiSigValidation is AuthorizationGuardAccess {
         bool isValid = validateSignatures(
             prefixedHash,
             instruction.signatures,
-            TokenOpTypes.OpType.ADMIN_OP
+            TokenOpTypes.OpType.SIGN_MANAGER_OP
         );
 
         // Ensure that the validation was successful
@@ -250,6 +259,7 @@ contract MultiSigValidation is AuthorizationGuardAccess {
         return signersGroup;
     }
 
+    /// Changed to use the AuthorizationGuard for signer checks
     /**
      * @dev Checks if an address is a signer for a specific operation type.
      * @param _address Address to be checked.
@@ -260,9 +270,16 @@ contract MultiSigValidation is AuthorizationGuardAccess {
         address _address,
         TokenOpTypes.OpType operationType
     ) public view returns (bool) {
-        string memory roleName = roles[operationType][_address];
-
-        return keccak256(abi.encodePacked(roleName)) != keccak256(abi.encodePacked(""));
+        if (operationType == TokenOpTypes.OpType.MINT_OP) {
+            return _authorizationGuard.hasRole(_authorizationGuard.MINT_SIGNER_ROLE(), _address);
+        } else if (operationType == TokenOpTypes.OpType.RELEASE_OP) {
+            return _authorizationGuard.hasRole(_authorizationGuard.RELEASE_SIGNER_ROLE(), _address);
+        } else if (operationType == TokenOpTypes.OpType.SIGN_MANAGER_OP) {
+            return
+                _authorizationGuard.hasRole(_authorizationGuard.SIGNATURE_MANAGER_ROLE(), _address);
+        } else {
+            revert InvalidOperationType();
+        }
     }
 
     /**
@@ -331,9 +348,18 @@ contract MultiSigValidation is AuthorizationGuardAccess {
 
     function _removeSigner(SignerEntity memory signer) internal {
         if (isSigner(signer.signerAddress, signer.operationType)) {
-            bool isDeregistered = deregisterSigner(signer.signerAddress, signer.operationType);
+            // Decrease the required signatures count
+            requiredSignatures[signer.operationType]--;
 
-            require(isDeregistered, "Failed to deregister signer");
+            // Clear role for wallet address
+            roles[signer.operationType][signer.signerAddress] = "";
+
+            _authorizationGuard.setSignerRole(
+                signer.signerAddress,
+                signer.operationType,
+                false,
+                msg.sender
+            );
 
             emit SignerRemoved(signer.roleName, signer.signerAddress, signer.operationType);
         }
@@ -342,66 +368,23 @@ contract MultiSigValidation is AuthorizationGuardAccess {
     function _addSigner(SignerEntity memory signer) internal {
         if (!isSigner(signer.signerAddress, signer.operationType)) {
             // Add signer address to registry list
-            bool isRegistered = registerSigner(
+            unsortedSignersRegistry[signer.operationType][
+                requiredSignatures[signer.operationType]
+            ] = signer.signerAddress;
+
+            requiredSignatures[signer.operationType] += 1;
+
+            roles[signer.operationType][signer.signerAddress] = signer.roleName;
+
+            _authorizationGuard.setSignerRole(
                 signer.signerAddress,
-                signer.roleName,
-                signer.operationType
+                signer.operationType,
+                true,
+                msg.sender
             );
-            require(isRegistered, "Failed to register signer");
 
             emit SignerAdded(signer.roleName, signer.signerAddress, signer.operationType);
         }
-    }
-
-    /**
-     * @dev Add role for signers and add signer to the specified group (registry)
-     * @param newSigner The address of the new signer
-     * @param roleName The name of the role held by the new signer
-     * @param operationType The type of operation to sign by signers group (0 for mint, 1 for release)
-     * @return bool Returns registration result as a boolean
-     */
-    function registerSigner(
-        address newSigner,
-        string memory roleName,
-        TokenOpTypes.OpType operationType
-    ) internal returns (bool) {
-        unsortedSignersRegistry[operationType][requiredSignatures[operationType]] = newSigner;
-        requiredSignatures[operationType] += 1;
-
-        roles[operationType][newSigner] = roleName;
-
-        return true;
-    }
-
-    /**
-     * @dev Remove role for signers and remove signer from the specified group (registry)
-     * @param targetSigner The current signer address to deregister
-     * @param operationType The type of operation to sign by signers group (0 for mint, 1 for release)
-     * @return bool Returns deregistration result as a boolean
-     */
-    function deregisterSigner(
-        address targetSigner,
-        TokenOpTypes.OpType operationType
-    ) internal returns (bool) {
-        uint256 sigCount = requiredSignatures[operationType];
-        require(sigCount > 0, "No signers for this operation");
-
-        for (uint256 i = 0; i < sigCount; i++) {
-            if (unsortedSignersRegistry[operationType][i] == targetSigner) {
-                // Move the last signer to this position
-                unsortedSignersRegistry[operationType][i] = unsortedSignersRegistry[operationType][
-                    sigCount - 1
-                ];
-                // Clear the last position
-                unsortedSignersRegistry[operationType][sigCount - 1] = address(0);
-                // Decrease the required signatures count
-                requiredSignatures[operationType]--;
-                // Clear role for wallet address
-                roles[operationType][targetSigner] = "";
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -414,6 +397,25 @@ contract MultiSigValidation is AuthorizationGuardAccess {
         TokenOpTypes.OpType operationType,
         address signer
     ) public view returns (string memory) {
+        if (operationType == TokenOpTypes.OpType.MINT_OP) {
+            require(
+                _authorizationGuard.hasRole(_authorizationGuard.MINT_SIGNER_ROLE(), signer),
+                "Address is not a mint signer"
+            );
+        } else if (operationType == TokenOpTypes.OpType.RELEASE_OP) {
+            require(
+                _authorizationGuard.hasRole(_authorizationGuard.RELEASE_SIGNER_ROLE(), signer),
+                "Address is not a release signer"
+            );
+        } else if (operationType == TokenOpTypes.OpType.SIGN_MANAGER_OP) {
+            require(
+                _authorizationGuard.hasRole(_authorizationGuard.SIGNATURE_MANAGER_ROLE(), signer),
+                "Address is not a signature manager signer"
+            );
+        } else {
+            revert InvalidOperationType();
+        }
+
         return roles[operationType][signer];
     }
 }
