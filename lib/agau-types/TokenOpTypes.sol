@@ -9,10 +9,16 @@ import {WhitelistTypes} from "lib/agau-common/admin-ops/WhitelistTypes.sol";
  * @dev Library with types used by the contracts for Token interaction
  */
 library TokenOpTypes {
+    struct SignerEntity {
+        address signerAddress;
+        string roleName;
+        OpType operationType;
+    }
+
     enum OpType {
         MINT_OP,
         RELEASE_OP,
-        ADMIN_OP
+        SIGN_MANAGER_OP
     }
 
     struct CommonAdminOpManageSignerData {
