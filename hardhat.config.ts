@@ -31,6 +31,7 @@ export const chainIds = {
     hardhat: 31337n,
     sepolia: 11155111n,
     bsc: 97n,
+    ftm: 4002n,
     ethereum: 1n,
     tenderly: 17000n, // same as Holesky
 };
@@ -56,6 +57,9 @@ function getChainConfig(chain: keyof typeof chainIds): NetworkUserConfig {
             break;
         case `tenderly`:
             jsonRpcUrl = process.env.TENDERLY_FORK_URL;
+            break;
+        case `ftm`:
+            jsonRpcUrl = process.env.FTM_NODE_URL;
             break;
         default:
             throw new Error(`Unknown chain ${chain}`);
@@ -179,6 +183,7 @@ const config: HardhatUserConfig = {
         bsc: getChainConfig(`bsc`),
         ethereum: getChainConfig(`ethereum`),
         tenderly: getChainConfig(`tenderly`),
+        ftm: getChainConfig(`ftm`),
     },
     tenderly: {
         username: process.env.TENDERLY_USERNAME ?? ``,
@@ -186,7 +191,7 @@ const config: HardhatUserConfig = {
         privateVerification: false,
     },
     etherscan: {
-        apiKey: { sepolia: process.env.ETHERSCAN_API_KEY || "", bscTestnet: process.env.BSCSCAN_API_KEY || "" },
+        apiKey: { sepolia: process.env.ETHERSCAN_API_KEY || "", bscTestnet: process.env.BSCSCAN_API_KEY || "", ftmTestnet: process.env.FTMSCAN_API_KEY || "" },
     },
     typechain: {
         target: `ethers-v6`,

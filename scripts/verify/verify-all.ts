@@ -104,11 +104,3 @@ export const verifyAllContracts = async () => {
         console.error(`Verify-All: error`, error);
     }
 }
-
-
-verifyAllContracts()
-    .then(() => process.exit(0))
-    .catch((error) => {
-        console.error(error);
-        process.exit(1);
-    });

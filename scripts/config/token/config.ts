@@ -14,20 +14,46 @@ export const getTokensMetadata = (
 ): TokenInitParamStruct[] => {
     return [
         {
+            tokenId: TokenIdentifier.Gold,
             owner: owner,
             feesManager: feesManager,
-            tokenId: TokenIdentifier.Gold,
             name: `AgAu Gold`,
             symbol: `AGOLD`,
             authorizationGuard: authorizationGuardAddress
         },
         {
+            tokenId: TokenIdentifier.Silver,
             owner: owner,
             feesManager: feesManager,
-            tokenId: TokenIdentifier.Silver,
             name: `AgAu Silver`,
             symbol: `ASLVR`,
             authorizationGuard: authorizationGuardAddress
         },
+    ];
+};
+
+
+export const getTokensMetadataVerification = (
+    owner: AddressLike,
+    feesManager: AddressLike,
+    authorizationGuardAddress: AddressLike
+): any[] => {
+    return [
+        [
+            owner,
+            feesManager,
+            TokenIdentifier.Gold,
+            `AgAu Gold`,
+            `AGOLD`,
+            authorizationGuardAddress
+        ],
+        [
+            owner,
+            feesManager,
+            TokenIdentifier.Silver,
+            `AgAu Silver`,
+            `ASLVR`,
+            authorizationGuardAddress
+        ],
     ];
 };

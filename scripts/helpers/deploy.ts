@@ -1,7 +1,7 @@
 import { VERIFY_CONTRACTS } from "./../../hardhat.config";
 
 
-import { deployWait, verifyContract } from "./utils";
+import { deployWait, verifyContract, verifyContractSpecial } from "./utils";
 import { upgrades, ethers } from "hardhat";
 import { Contract, Signer, AddressLike, BaseContract, BigNumberish } from "ethers";
 import { SignerEntityStruct } from "../signature/signature_interfaces";
@@ -197,6 +197,9 @@ async function onSuccessfulContractDeployment(
         [key: string]: string | bigint | object | string[] | object[];
     } = {},
 ): Promise<void> {
+    if (contractName === `TokenFactory` && VERIFY_CONTRACTS) {
+        await verifyContractSpecial(contractAddress, constructorArgs);
+    }
     if (VERIFY_CONTRACTS) await verifyContract(contractAddress, constructorArgs);
 }
 
@@ -236,9 +239,6 @@ export async function deployAuthorizationGuard(
 
 export interface MultiSigValidationConstructorArgs {
     authorizationGuard: AddressLike;
-    multiSigSigners: SignerEntityStruct[];
-    mintSigners: SignerEntityStruct[];
-    releaseSigners: SignerEntityStruct[];
     [key: string]: SignerEntityStruct[] | AddressLike;
 
 }
@@ -253,9 +253,6 @@ export async function deployMultiSigValidation(
     const multiSigValidationContract = await deployWait(
         multiSigValidation.deploy(
             constructorArgs.authorizationGuard,
-            constructorArgs.multiSigSigners,
-            constructorArgs.mintSigners,
-            constructorArgs.releaseSigners
         ),
     );
 

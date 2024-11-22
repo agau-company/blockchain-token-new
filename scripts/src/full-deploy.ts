@@ -8,11 +8,13 @@ import { getFeeRate, getFeeWallet } from "../helpers/env";
 
 import * as deployment from "../helpers/deploy";
 import { SignerEntityStruct } from "../signature/signature_interfaces";
+import { MultiSigValidation } from "../../types";
+import { verifyAllContracts } from "../verify/verify-all";
 
 export enum OpType {
     MINT_OP,
     RELEASE_OP,
-    ADMIN_OP
+    SIGN_MANAGER_OP
 }
 
 const feesWallet = getFeeWallet();
@@ -58,13 +60,11 @@ export const fullDeploy = async (): Promise<void> => {
     ];
 
     const multiSigSigners: SignerEntityStruct[] = [
-        { signerAddress: signer1.address, roleName: "Signature Manager", operationType: OpType.ADMIN_OP },
+        { signerAddress: signer1.address, roleName: "Signature Manager", operationType: OpType.SIGN_MANAGER_OP },
     ];
 
     // Wallets who can call the TokenManager and other contract functions such as `mintAndLockTokens`, `releaseTokens`, should be the backend wallet.
     const authorizedAdmins = [deployer.address, backendWallet.address];
-
-    // console.log(`Signers:`, { signer1: signer1.address, signer2: signer2.address, signer3: signer3.address, signer4: signer4.address });
 
     deployerAddr = deployer.address;
     const testnetDeployment = await isTestnetDeployment();
@@ -78,8 +78,6 @@ export const fullDeploy = async (): Promise<void> => {
     }
 
     const balance = (await ethers.provider.getBalance(deployerAddr)).toString();
-    // console.log(`Deploying contracts with the account ${deployerAddr} and balance: ${balance}`);
-
 
     const expectedTokenManagerContractAddress = ethers.getCreateAddress({
         from: deployerAddr,
@@ -87,8 +85,6 @@ export const fullDeploy = async (): Promise<void> => {
         nonce: (await deployer.getNonce()) + 5,
     });
 
-
-    // console.log(`Expected token Manager:1`, expectedTokenManagerContractAddress);
     // Deploy `authorizationGuard`
     const authorizationGuard = await trackDeployment(
         () => deployment.deployAuthorizationGuard(deployer, {
@@ -105,23 +101,22 @@ export const fullDeploy = async (): Promise<void> => {
     const multiSigValidation = await trackDeployment(
         () => deployment.deployMultiSigValidation(deployer, {
             authorizationGuard: authorizationGuard.target,
-            multiSigSigners: multiSigSigners,
-            mintSigners: mintSigners,
-            releaseSigners: releaseSigners
         }),
         `MultiSigValidation`
-    )
+    ) as MultiSigValidation
 
-    // console.log(`MultiSigValidation deployed at ${multiSigValidation.target}`);
 
+    // Grant role to signature contract
+    const grantTx = await authorizationGuard.grantRole(await authorizationGuard.SIGN_ROLES_MANAGER_ROLE(), multiSigValidation.target);
+    const receipt = await grantTx.wait();
+
+    await multiSigValidation.initialize(multiSigSigners, mintSigners, releaseSigners);
 
     // Deploy `MetalToken` beacon
     const metalTokenBeacon = await trackDeployment(
         () => deployment.deployMetalTokenBeacon(deployer),
         `MetalToken`,
     );
-
-    // console.log(`MetalToken Beacon proxy deployed at ${metalTokenBeacon.target}`);
 
 
     // Deploy `FeesManager` proxy
@@ -133,7 +128,6 @@ export const fullDeploy = async (): Promise<void> => {
 
 
 
-    // console.log(`Actual TokenManager address:`, expectedTokenManagerAddress)
     const feeRate = getFeeRate();
     const feeWallet = getFeeWallet();
     const feesManagerProxy = await trackDeployment(
@@ -149,9 +143,6 @@ export const fullDeploy = async (): Promise<void> => {
         `FeesManager`,
     );
 
-    // console.log(`FeesManager deployed at ${feesManagerProxy.target}`);
-
-
     // Deploy `TokenFactory` contract
     const tokensMetadata = getTokensMetadata(deployerAddr, feesManagerProxy.target, authorizationGuard.target);
     const tokenFactory = await trackDeployment(
@@ -164,7 +155,6 @@ export const fullDeploy = async (): Promise<void> => {
         `TokenFactory`,
     );
 
-    // console.log(`TokenFactory deployed at ${tokenFactory.target}`);
 
     // Deploy `TokenManager` contract
     const tokenManager = await trackDeployment(
@@ -180,12 +170,8 @@ export const fullDeploy = async (): Promise<void> => {
         `TokenManager`,
     );
 
-    // console.log(`TokenManager deployed at ${tokenManager.target}`);
 
     const isTrusted = await authorizationGuard.isTrustedContract(tokenManager.target);
-    if (isTrusted) {
-        // console.log(`Token manager is trusted?.`, isTrusted)
-    }
 
     // In case of testnet deployment, verify the proxy and beacon contracts on Tenderly
     if (testnetDeployment) {

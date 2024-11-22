@@ -37,6 +37,7 @@
         "full-deploy": "npx hardhat run scripts/run-full-deploy.ts --network hardhat",
         "full-deploy-sepolia": "npx hardhat run scripts/run-full-deploy.ts --network sepolia",
         "full-deploy-bsc": "npx hardhat run scripts/run-full-deploy.ts --network bsc",
+        "full-deploy-ftm": "npx hardhat run scripts/run-full-deploy.ts --network ftm",
         "full-deploy-local": "npx hardhat run scripts/run-full-deploy.ts --network hardhat",
         "full-deploy:dev": "TENDERLY_AUTO_VERIFY=TRUE npm run full-deploy tenderly",
         "verify-all-sepolia": "npx hardhat run scripts/verify/verify-all.ts --network sepolia",

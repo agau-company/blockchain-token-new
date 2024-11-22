@@ -7,6 +7,8 @@ import { Contract, BaseContract, ContractTransactionResponse } from "ethers";
 
 import * as fs from "fs";
 import * as path from "path";
+import { getTokensMetadataVerification } from "../config/token/config";
+import { TokenInitParamStruct } from "./deploy";
 
 // --- Transaction helpers ---
 
@@ -253,16 +255,80 @@ export async function verifyContract(
         [key: string]: string | bigint | object | string[] | object[];
     } = {},
 ): Promise<void> {
-    console.log(`Verifying contract at address ${contractAddress} ...`);
-    const constructorValues = Object.values(constructorParams);
-    await run(`verify:verify`, {
-        address: contractAddress.toString(),
-        constructorArguments: constructorValues,
-    });
+    try {
+        console.log(`Verifying contract at address ${contractAddress} ...`);
+        await sleep(5000);
+        const constructorValues = Object.values(constructorParams);
+        console.log(`Verifying constructor arguments: `, constructorValues);
+        await run(`verify:verify`, {
+            address: contractAddress.toString(),
+            constructorArguments: constructorValues,
+        });
+    } catch (error) {
+        console.log(`Error verifying contract at address ${contractAddress}`, error);
+        return;
+    }
+
+}
+
+export function convertTokenInitParamsToArray(params: TokenInitParamStruct[]): any[][] {
+    return params.map(param => [
+        param.tokenId,
+        param.owner,
+        param.feesManager,
+        param.name,
+        param.symbol,
+        param.authorizationGuard
+    ]);
+}
+
+export async function verifyContractSpecial(
+    contractAddress: AddressLike,
+    constructorParams: {
+        [key: string]: any;
+    } = {},
+): Promise<void> {
+    try {
+        console.log(`Verifying contract at address ${contractAddress} ...`);
+        await sleep(5000);
+
+        // Convert initTokens to array of arrays
+        const constructorValues = Object.entries(constructorParams).map(([key, value]) => {
+            // if (key === 'initTokens') {
+            //     return convertTokenInitParamsToArray(value as TokenInitParamStruct[]);
+            // }
+            return value;
+        });
+
+        console.log("Constructor arguments before encoding:", JSON.stringify(constructorValues, null, 2));
+
+        // Encode constructor arguments
+        const abiCoder = new ethers.AbiCoder();
+        const encodedConstructorArgs = abiCoder.encode(
+            ['address', 'address', 'tuple(uint256,address,address,string,string,address)[]'],
+            constructorValues
+        );
+
+        console.log("Encoded constructor arguments:", encodedConstructorArgs);
+
+        await run(`verify:verify`, {
+            address: contractAddress.toString(),
+            constructorArguments: constructorValues,
+            encodedConstructorArguments: encodedConstructorArgs.slice(2) // remove '0x' prefix
+        });
+    } catch (error) {
+        console.log(`Error verifying contract at address ${contractAddress}`, error);
+        return;
+    }
 }
 
 // --- Input handling helpers ---
 
 function askYesNo(query: string): boolean {
     return keyInYNStrict(query);
+}
+
+
+async function sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
