@@ -2,7 +2,6 @@
 pragma solidity 0.8.22;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-// import {AuthorizationGuardAccess} from "../../management/roles/AuthorizationGuardAccess.sol";
 import {AuthorizationGuard} from "../../management/roles/AuthorizationGuard.sol";
 /**
  * @title TokensLockable
@@ -73,6 +72,7 @@ abstract contract TokensLockable is Initializable {
     /// @param account Account address
     /// @param amount Amount of the tokens to unlock
     function _subLockedBalance(address account, uint256 amount) internal {
+        require(_lockedBalance[account] >= amount, "Insufficient locked balance");
         uint256 newLockedBalance = _lockedBalance[account] - amount;
 
         _lockedBalance[account] = newLockedBalance;
